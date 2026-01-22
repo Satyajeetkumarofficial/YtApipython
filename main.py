@@ -3,8 +3,8 @@ import yt_dlp
 
 app = FastAPI(
     title="YouTube Downloader API",
-    description="720p Video+Audio | 1080p Video-Only | Max Audio",
-    version="4.0"
+    description="720p Audio+Video | 1080p Video-Only | Max Audio | No Server Load",
+    version="FINAL"
 )
 
 YDL_OPTS = {
@@ -19,16 +19,16 @@ def home():
     return {
         "status": True,
         "message": "YouTube Downloader API Running",
-        "endpoint": "/youtube?url=YOUTUBE_URL"
+        "usage": "/youtube?url=YOUTUBE_URL"
     }
 
 @app.get("/youtube")
-def youtube(url: str = Query(...)):
+def youtube(url: str = Query(..., description="YouTube video URL")):
     try:
         with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        video_av = []
+        video_with_audio = []
         video_only_1080 = None
         best_audio = None
 
@@ -37,25 +37,25 @@ def youtube(url: str = Query(...)):
                 continue
 
             height = f.get("height")
-            protocol = f.get("protocol")
 
-            # 🎥 144p–720p : Video + Audio ONLY
+            # 🎥 144p–720p : VIDEO + AUDIO (HLS / DASH allowed)
             if (
                 height
                 and 144 <= height <= 720
                 and f.get("vcodec") != "none"
                 and f.get("acodec") != "none"
-                and protocol != "m3u8_native"
             ):
-                video_av.append({
+                video_with_audio.append({
                     "quality": f"{height}p",
+                    "type": "video+audio",
                     "ext": f.get("ext"),
                     "fps": f.get("fps"),
                     "filesize": f.get("filesize"),
+                    "protocol": f.get("protocol"),
                     "url": f.get("url")
                 })
 
-            # 🎥 1080p : Video ONLY (labelled)
+            # 🎥 1080p : VIDEO ONLY (clearly labelled)
             if (
                 height == 1080
                 and f.get("vcodec") != "none"
@@ -64,14 +64,15 @@ def youtube(url: str = Query(...)):
                 video_only_1080 = {
                     "quality": "1080p",
                     "type": "video_only",
-                    "note": "Audio not included (YouTube DASH)",
+                    "note": "Audio not included (YouTube DASH/HLS)",
                     "ext": f.get("ext"),
                     "fps": f.get("fps"),
                     "filesize": f.get("filesize"),
+                    "protocol": f.get("protocol"),
                     "url": f.get("url")
                 }
 
-            # 🎧 Best Audio (Max bitrate)
+            # 🎧 BEST AUDIO (maximum available bitrate, HLS allowed)
             if (
                 f.get("vcodec") == "none"
                 and f.get("acodec") != "none"
@@ -82,18 +83,22 @@ def youtube(url: str = Query(...)):
                         "bitrate": f.get("abr"),
                         "ext": f.get("ext"),
                         "filesize": f.get("filesize"),
+                        "protocol": f.get("protocol"),
                         "url": f.get("url")
                     }
 
-        # sort video qualities
-        video_av = sorted(video_av, key=lambda x: int(x["quality"].replace("p", "")))
+        # sort 144p → 720p
+        video_with_audio = sorted(
+            video_with_audio,
+            key=lambda x: int(x["quality"].replace("p", ""))
+        )
 
         return {
             "status": True,
             "title": info.get("title"),
             "duration": info.get("duration"),
             "thumbnail": info.get("thumbnail"),
-            "video_with_audio_upto_720p": video_av,
+            "video_with_audio_upto_720p": video_with_audio,
             "video_only_1080p": video_only_1080,
             "best_audio": best_audio
         }
