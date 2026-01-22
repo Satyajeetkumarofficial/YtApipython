@@ -1,120 +1,53 @@
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query
 import yt_dlp
 
-app = FastAPI(
-    title="YouTube Max-Chance Downloader API",
-    description="144p–1080p | Audio+Video max chance | Audio always | Thumbnail | No Server Load",
-    version="FINAL-LABEL-FIXED"
-)
+app = FastAPI(title="YouTube All-in-One API")
 
-# yt-dlp options (India + nearby friendly)
 YDL_OPTS = {
     "quiet": True,
-    "no_warnings": True,
-    "skip_download": True,
-
-    # Geo handling
-    "geo_bypass": True,
-    "geo_bypass_country": "IN",
-
-    # Stability
-    "nocheckcertificate": True,
-    "extractor_retries": 3,
-    "fragment_retries": 3
+    "skip_download": True
 }
 
-@app.get("/")
-def home():
+def mb(size):
+    if not size:
+        return None
+    return round(size / 1024 / 1024, 2)
+
+@app.get("/fetch")
+def fetch(url: str = Query(...)):
+    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+        info = ydl.extract_info(url, download=False)
+
+    mp4_videos = []
+    mp3_audios = []
+
+    for f in info.get("formats", []):
+        # 🎥 MP4 Video + Audio (progressive)
+        if (
+            f.get("ext") == "mp4"
+            and f.get("vcodec") != "none"
+            and f.get("acodec") != "none"
+        ):
+            mp4_videos.append({
+                "quality": f.get("format_note"),
+                "resolution": f.get("resolution"),
+                "filesize_mb": mb(f.get("filesize")),
+                "cdn": f.get("url")
+            })
+
+        # 🔊 MP3 / m4a audio
+        if f.get("vcodec") == "none" and f.get("acodec") != "none":
+            mp3_audios.append({
+                "bitrate_kbps": f.get("abr"),
+                "ext": f.get("ext"),
+                "filesize_mb": mb(f.get("filesize")),
+                "cdn": f.get("url")
+            })
+
     return {
-        "status": True,
-        "message": "YouTube Max-Chance API Running",
-        "rule": "Audio+Video if possible, else Video + Audio always",
-        "usage": "/youtube?url=YOUTUBE_URL"
+        "title": info.get("title"),
+        "duration": info.get("duration"),
+        "thumbnail": info.get("thumbnail"),
+        "mp4_video_audio": mp4_videos,
+        "mp3_audio": mp3_audios
     }
-
-@app.get("/youtube")
-def youtube(url: str = Query(..., description="YouTube video URL")):
-    try:
-        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-            info = ydl.extract_info(url, download=False)
-
-        videos = {}
-        best_audio = None
-
-        for f in info.get("formats", []):
-            if not f.get("url"):
-                continue
-
-            height = f.get("height")
-            protocol = f.get("protocol")
-
-            # 🎥 Collect video formats (144p–1080p)
-            if height and 144 <= height <= 1080 and f.get("vcodec") != "none":
-                quality = f"{height}p"
-
-                # ✅ FINAL LABEL LOGIC
-                if protocol == "m3u8_native" and height <= 720:
-                    vtype = "audio_video"          # HLS embedded audio
-                elif f.get("acodec") != "none":
-                    vtype = "audio_video"          # Progressive MP4
-                else:
-                    vtype = "video_only"           # Mostly 1080p
-
-                # Keep first/best per quality
-                if quality not in videos:
-                    videos[quality] = {
-                        "quality": quality,
-                        "type": vtype,
-                        "protocol": protocol,
-                        "ext": f.get("ext"),
-                        "fps": f.get("fps"),
-                        "filesize": f.get("filesize"),
-                        "url": f.get("url")
-                    }
-
-            # 🎧 Separate audio streams (DASH / MP4 / WebM)
-            if f.get("vcodec") == "none" and f.get("abr"):
-                if not best_audio or f.get("abr", 0) > best_audio.get("bitrate", 0):
-                    best_audio = {
-                        "type": "separate",
-                        "bitrate": f.get("abr"),
-                        "protocol": protocol,
-                        "ext": f.get("ext"),
-                        "filesize": f.get("filesize"),
-                        "url": f.get("url")
-                    }
-
-        # 🔁 Fallback: HLS embedded audio (VERY IMPORTANT)
-        if not best_audio:
-            best_audio = {
-                "type": "embedded",
-                "note": "Audio is embedded inside HLS playlist",
-                "protocol": "m3u8_native",
-                "usage": "Use the same video URL to play audio+video (upto 720p)"
-            }
-
-        # Sort videos by quality (144p → 1080p)
-        video_list = sorted(
-            videos.values(),
-            key=lambda x: int(x["quality"].replace("p", ""))
-        )
-
-        return {
-            "status": True,
-            "title": info.get("title"),
-            "duration": info.get("duration"),
-            "thumbnail": info.get("thumbnail"),
-
-            "videos": video_list,
-            "best_audio": best_audio,
-
-            "note": (
-                "For type='audio_video', audio is already included. "
-                "For type='video_only' with best_audio.type='separate', "
-                "play or merge client-side. "
-                "If best_audio.type='embedded', audio is inside HLS."
-            )
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
