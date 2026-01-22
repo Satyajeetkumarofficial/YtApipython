@@ -30,11 +30,7 @@ YDL_BASE_OPTS = {
     "quiet": True,
     "skip_download": True,
     "nocheckcertificate": True,
-    "extractor_args": {
-        "youtube": {
-            # Android client = less bot checks
-            "player_client": ["android"]
-        }
+}
     }
 }
 
