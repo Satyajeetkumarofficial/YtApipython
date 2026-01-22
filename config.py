@@ -22,10 +22,10 @@ USE_PROXY = False               # default False
 # 4 = Cookies + Proxy
 
 FALLBACK_ORDER = [
-    "no_cookie_no_proxy",
-    "proxy_only",
-    "cookie_only",
-    "cookie_proxy"
+    {"cookie": False, "proxy": False},
+    {"cookie": False, "proxy": True},
+    {"cookie": True,  "proxy": False},
+    {"cookie": True,  "proxy": True},
 ]
 
 # ==============================
