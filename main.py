@@ -1,86 +1,73 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
 import yt_dlp
 
-app = FastAPI(
-    title="YouTube Direct Downloader API",
-    version="1.0"
-)
+app = FastAPI(title="YouTube 360p Downloader")
+templates = Jinja2Templates(directory="templates")
 
 YDL_OPTS = {
     "quiet": True,
     "skip_download": True,
-    "nocheckcertificate": True
+    "noplaylist": True,
+    "format": "18/bestaudio",  # 360p OR audio
 }
 
-# 🔹 filesize calculator (exact + fallback)
-def calc_filesize(f, duration):
-    # exact filesize available
-    if f.get("filesize"):
-        return round(f["filesize"] / 1024 / 1024, 2)
+def mb(size):
+    if not size:
+        return None
+    return round(size / 1024 / 1024, 2)
 
-    # fallback using bitrate
-    tbr = f.get("tbr")  # kbps
-    if tbr and duration:
-        size_bytes = (tbr * 1024 * duration) / 8
-        return round(size_bytes / 1024 / 1024, 2)
-
-    return None
-
-
-@app.get("/")
-def home():
-    return {
-        "status": "API Running",
-        "endpoint": "/fetch?url=YOUTUBE_URL"
-    }
-
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/fetch")
-def fetch(url: str = Query(..., description="YouTube video URL")):
-    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
-        info = ydl.extract_info(url, download=False)
+def fetch(url: str = Query(...)):
+    try:
+        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+            info = ydl.extract_info(url, download=False)
 
-    mp4_video_audio = []
-    audio_only = []
+    except Exception:
+        # 🔥 MOST IMPORTANT PART
+        return JSONResponse(
+            {
+                "error": True,
+                "blocked": True,
+                "message": "YouTube blocked automated access for this video",
+                "hint": "This video plays in Incognito but download URLs require cookies in 2025",
+                "solution": "Use cookies-based mode for guaranteed results"
+            },
+            status_code=200
+        )
 
-    duration = info.get("duration")
+    video_360 = None
+    audio_mp3 = None
 
     for f in info.get("formats", []):
+        # 🎥 360p video+audio
+        if f.get("itag") == 18:
+            video_360 = {
+                "quality": "360p",
+                "ext": "mp4",
+                "filesize_mb": mb(f.get("filesize")),
+                "direct_link": f.get("url"),
+            }
 
-        protocol = f.get("protocol", "")
-        is_hls = protocol.startswith("m3u8")
-
-        # 🎥 MP4 Video + Audio (progressive only)
-        if (
-            f.get("ext") == "mp4"
-            and f.get("vcodec") != "none"
-            and f.get("acodec") != "none"
-            and not is_hls
-        ):
-            mp4_video_audio.append({
-                "quality": f.get("format_note") or f.get("height"),
-                "resolution": f.get("resolution"),
-                "filesize_mb": calc_filesize(f, duration),
-                "direct_link": f.get("url")
-            })
-
-        # 🔊 AUDIO only (m4a / webm)
-        if (
-            f.get("vcodec") == "none"
-            and f.get("acodec") != "none"
-            and not is_hls
-        ):
-            audio_only.append({
-                "bitrate_kbps": round(f.get("abr", 0), 1),
+        # 🎵 audio
+        if f.get("vcodec") == "none" and f.get("acodec") != "none":
+            audio_mp3 = {
                 "ext": f.get("ext"),
-                "filesize_mb": calc_filesize(f, duration),
-                "direct_link": f.get("url")
-            })
+                "bitrate_kbps": f.get("abr"),
+                "filesize_mb": mb(f.get("filesize")),
+                "direct_link": f.get("url"),
+            }
 
     return {
+        "error": False,
         "title": info.get("title"),
-        "duration": duration,
+        "duration": info.get("duration"),
         "thumbnail": info.get("thumbnail"),
-        "mp4_video_audio": mp4_video_audio,
-        "audio_only": audio_only
+        "video_360p": video_360,
+        "audio": audio_mp3,
     }
