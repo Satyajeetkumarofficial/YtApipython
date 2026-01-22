@@ -1,37 +1,12 @@
 from fastapi import FastAPI, Query
 import yt_dlp
 import os
+import config
 
-app = FastAPI(title="YouTube Downloader API (Advanced Fallback)")
-
-# ---------- BASE CONFIG ----------
-
-BASE_OPTS = {
-    "quiet": True,
-    "skip_download": True,
-    "nocheckcertificate": True,
-    "extractor_args": {
-        "youtube": {
-            "player_client": ["android"]
-        }
-    }
-}
-
-PROXY = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY")
-COOKIE_FILE = "cookies.txt"
-
-
-def get_opts(use_proxy=False, use_cookies=False):
-    opts = BASE_OPTS.copy()
-
-    if use_proxy and PROXY:
-        opts["proxy"] = PROXY
-
-    if use_cookies and os.path.exists(COOKIE_FILE):
-        opts["cookiefile"] = COOKIE_FILE
-
-    return opts
-
+app = FastAPI(
+    title=config.APP_NAME,
+    version=config.APP_VERSION
+)
 
 # ---------- HELPERS ----------
 
@@ -43,23 +18,41 @@ def build_label(ext, height=None, abr=None):
     return ext
 
 
-def extract_info_with_fallback(url: str):
-    attempts = [
-        ("no_cookie_no_proxy", get_opts()),
-        ("proxy_only", get_opts(use_proxy=True)),
-        ("cookies_only", get_opts(use_cookies=True)),
-        ("cookies_and_proxy", get_opts(use_proxy=True, use_cookies=True)),
-    ]
+def get_opts(use_proxy=False, use_cookies=False):
+    opts = config.YDL_BASE_OPTS.copy()
 
+    # Proxy
+    if use_proxy and config.PROXY:
+        opts["proxy"] = config.PROXY
+
+    # Cookies
+    if (
+        use_cookies
+        and config.USE_COOKIES_IF_EXISTS
+        and os.path.exists(config.COOKIE_FILE)
+    ):
+        opts["cookiefile"] = config.COOKIE_FILE
+
+    return opts
+
+
+def extract_info_with_fallback(url: str):
     last_error = None
 
-    for mode, opts in attempts:
+    for step in config.FALLBACK_ORDER:
         try:
+            opts = get_opts(
+                use_proxy=step["use_proxy"],
+                use_cookies=step["use_cookies"]
+            )
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                return info, mode
+
+            mode = f'proxy={step["use_proxy"]}, cookies={step["use_cookies"]}'
+            return info, mode
+
         except Exception as e:
-            last_error = f"{mode}: {e}"
+            last_error = str(e)
 
     raise Exception(last_error)
 
@@ -69,7 +62,7 @@ def extract_info_with_fallback(url: str):
 @app.get("/fetch")
 def fetch(url: str = Query(...)):
     try:
-        info, mode = extract_info_with_fallback(url)
+        info, mode_used = extract_info_with_fallback(url)
 
         video_with_audio = []
         video_only = []
@@ -77,7 +70,7 @@ def fetch(url: str = Query(...)):
 
         for f in info.get("formats", []):
 
-            # 🎥 VIDEO + AUDIO (SEARCH ALL PROGRESSIVE)
+            # 🎥 VIDEO + AUDIO (ALL PROGRESSIVE)
             if (
                 f.get("ext") == "mp4"
                 and f.get("vcodec") != "none"
@@ -127,19 +120,19 @@ def fetch(url: str = Query(...)):
 
         return {
             "error": False,
-            "mode_used": mode,  # debug / info
+            "mode_used": mode_used,
             "title": info.get("title"),
             "duration": str(info.get("duration")),
             "thumbnail": info.get("thumbnail"),
             "video_with_audio": video_with_audio,
             "video_only": video_only,
             "audio": audio,
-            "join": "@ProXBotz on Telegram",
-            "support": "@ProBotUpdate"
+            "join": config.JOIN_CHANNEL,
+            "support": config.SUPPORT_USER,
         }
 
     except Exception as e:
         return {
             "error": True,
             "message": str(e)
-        }
+                }
