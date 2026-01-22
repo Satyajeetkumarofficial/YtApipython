@@ -9,8 +9,24 @@ APP_VERSION = "2.0"
 # Cookies / Proxy
 # ==============================
 
-COOKIE_FILE = "cookies.txt"   # cookies.txt must exist in root
-USE_PROXY = False             # default False
+COOKIE_FILE = "cookies.txt"     # cookies.txt must exist
+USE_PROXY = False               # default False
+
+# ==============================
+# Fallback Order (VERY IMPORTANT)
+# ==============================
+
+# 1 = No cookies, no proxy
+# 2 = Proxy only
+# 3 = Cookies only
+# 4 = Cookies + Proxy
+
+FALLBACK_ORDER = [
+    "no_cookie_no_proxy",
+    "proxy_only",
+    "cookie_only",
+    "cookie_proxy"
+]
 
 # ==============================
 # Branding
