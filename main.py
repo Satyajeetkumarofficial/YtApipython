@@ -52,10 +52,13 @@ def youtube(url: str = Query(..., description="YouTube video URL")):
             if height and 144 <= height <= 1080 and f.get("vcodec") != "none":
                 quality = f"{height}p"
 
-                # Decide type
-                vtype = "audio_video"
-                if f.get("acodec") == "none":
-                    vtype = "video_only"
+                # Decide type more accurately
+if protocol == "m3u8_native" and height <= 720:
+    vtype = "audio_video"   # HLS embedded audio
+elif f.get("acodec") != "none":
+    vtype = "audio_video"   # Progressive MP4
+else:
+    vtype = "video_only"    # Mostly 1080p
 
                 # Keep first/best per quality
                 if quality not in videos:
