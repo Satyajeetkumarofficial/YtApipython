@@ -3,8 +3,8 @@ import yt_dlp
 
 app = FastAPI(
     title="YouTube Max-Chance Downloader API",
-    description="144p–1080p | Max Audio+Video | Audio Always | Thumbnail | No Server Load",
-    version="FINAL-1.0"
+    description="144p–1080p | Audio+Video max chance | Audio always | Thumbnail | No Server Load",
+    version="FINAL-LABEL-FIXED"
 )
 
 # yt-dlp options (India + nearby friendly)
@@ -52,13 +52,13 @@ def youtube(url: str = Query(..., description="YouTube video URL")):
             if height and 144 <= height <= 1080 and f.get("vcodec") != "none":
                 quality = f"{height}p"
 
-                # Decide type more accurately
-if protocol == "m3u8_native" and height <= 720:
-    vtype = "audio_video"   # HLS embedded audio
-elif f.get("acodec") != "none":
-    vtype = "audio_video"   # Progressive MP4
-else:
-    vtype = "video_only"    # Mostly 1080p
+                # ✅ FINAL LABEL LOGIC
+                if protocol == "m3u8_native" and height <= 720:
+                    vtype = "audio_video"          # HLS embedded audio
+                elif f.get("acodec") != "none":
+                    vtype = "audio_video"          # Progressive MP4
+                else:
+                    vtype = "video_only"           # Mostly 1080p
 
                 # Keep first/best per quality
                 if quality not in videos:
@@ -93,7 +93,7 @@ else:
                 "usage": "Use the same video URL to play audio+video (upto 720p)"
             }
 
-        # Sort videos by quality
+        # Sort videos by quality (144p → 1080p)
         video_list = sorted(
             videos.values(),
             key=lambda x: int(x["quality"].replace("p", ""))
@@ -109,9 +109,10 @@ else:
             "best_audio": best_audio,
 
             "note": (
-                "If video type is 'video_only' and best_audio.type is 'separate', "
+                "For type='audio_video', audio is already included. "
+                "For type='video_only' with best_audio.type='separate', "
                 "play or merge client-side. "
-                "If best_audio.type is 'embedded', audio is already inside HLS."
+                "If best_audio.type='embedded', audio is inside HLS."
             )
         }
 
