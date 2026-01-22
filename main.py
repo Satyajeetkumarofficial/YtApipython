@@ -1,140 +1,77 @@
 from fastapi import FastAPI, Query
 import yt_dlp
-import os
-import config
 
-app = FastAPI(
-    title=config.APP_NAME,
-    version=config.APP_VERSION
-)
+app = FastAPI(title="Incognito YouTube Downloader API")
 
-# -------------------------
-# Utils
-# -------------------------
+YDL_OPTS = {
+    "quiet": True,
+    "skip_download": True,
+    "nocheckcertificate": True,
+    "extractor_args": {
+        "youtube": {
+            "player_client": ["android", "web"]
+        }
+    }
+}
 
 def mb(size):
     if not size:
         return None
     return round(size / 1024 / 1024, 2)
 
-
-def build_ydl_opts(use_cookie: bool, use_proxy: bool):
-    opts = dict(config.YDL_BASE_OPTS)
-
-    # cookies
-    if use_cookie and os.path.exists(config.COOKIE_FILE):
-        opts["cookiefile"] = config.COOKIE_FILE
-
-    # proxy (example – change if needed)
-    if use_proxy:
-        # opts["proxy"] = "http://user:pass@ip:port"
-        pass
-
-    return opts
-
-
-# -------------------------
-# API
-# -------------------------
-
 @app.get("/fetch")
 def fetch(url: str = Query(...)):
+    try:
+        with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+            info = ydl.extract_info(url, download=False)
 
-    last_error = None
+        video_360 = None
+        audio_mp3 = None
 
-    for step in config.FALLBACK_ORDER:
-        use_cookie = step["cookie"]
-        use_proxy = step["proxy"]
-
-        try:
-            ydl_opts = build_ydl_opts(use_cookie, use_proxy)
-
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-
-            # -------------------------
-            # Base Info
-            # -------------------------
-            response = {
-                "error": False,
-                "title": info.get("title"),
-                "duration": str(info.get("duration")),
-                "thumbnail": info.get("thumbnail"),
-                "video_with_audio": [],
-                "video_only": [],
-                "audio": [],
-                "join": config.JOIN_CHANNEL,
-                "support": config.SUPPORT_USER
-            }
-
-            # -------------------------
-            # Formats
-            # -------------------------
-            for f in info.get("formats", []):
-
-                # Progressive MP4 (video + audio)
-                if (
-                    f.get("ext") == "mp4"
-                    and f.get("vcodec") != "none"
-                    and f.get("acodec") != "none"
-                    and not str(f.get("protocol", "")).startswith("m3u8")
-                ):
-                    response["video_with_audio"].append({
-                        "label": f"mp4 ({f.get('height')}p)",
-                        "type": "video_with_audio",
-                        "width": f.get("width"),
-                        "height": f.get("height"),
-                        "extension": "mp4",
-                        "fps": f.get("fps"),
-                        "url": f.get("url"),
-                    })
-
-                # Video only
-                if (
-                    f.get("vcodec") != "none"
-                    and f.get("acodec") == "none"
-                    and not str(f.get("protocol", "")).startswith("m3u8")
-                ):
-                    response["video_only"].append({
-                        "label": f"{f.get('ext')} ({f.get('height')}p)",
-                        "type": "video_only",
-                        "width": f.get("width"),
-                        "height": f.get("height"),
-                        "extension": f.get("ext"),
-                        "fps": f.get("fps"),
-                        "url": f.get("url"),
-                    })
-
-                # Audio only
-                if (
-                    f.get("vcodec") == "none"
-                    and f.get("acodec") != "none"
-                    and not str(f.get("protocol", "")).startswith("m3u8")
-                ):
-                    response["audio"].append({
-                        "label": f"{f.get('ext')} ({int(f.get('abr', 0))}kb/s)",
-                        "type": "audio",
-                        "extension": f.get("ext"),
-                        "bitrate": int(f.get("abr", 0)),
-                        "url": f.get("url"),
-                    })
-
-            # अगर कुछ तो मिला → return
+        for f in info.get("formats", []):
+            # ✅ 360p video + audio (itag 18)
             if (
-                response["video_with_audio"]
-                or response["video_only"]
-                or response["audio"]
+                f.get("itag") == 18
+                and f.get("ext") == "mp4"
+                and f.get("vcodec") != "none"
+                and f.get("acodec") != "none"
             ):
-                return response
+                video_360 = {
+                    "label": "mp4 (360p)",
+                    "quality": "360p",
+                    "width": f.get("width"),
+                    "height": f.get("height"),
+                    "extension": "mp4",
+                    "filesize_mb": mb(f.get("filesize")),
+                    "direct_link": f.get("url")
+                }
 
-        except Exception as e:
-            last_error = str(e)
-            continue
+            # ✅ Best audio (for MP3 use)
+            if (
+                f.get("vcodec") == "none"
+                and f.get("acodec") != "none"
+                and f.get("abr")
+            ):
+                if not audio_mp3 or f.get("abr", 0) > audio_mp3["bitrate_kbps"]:
+                    audio_mp3 = {
+                        "label": "mp3",
+                        "bitrate_kbps": round(f.get("abr")),
+                        "extension": f.get("ext"),
+                        "filesize_mb": mb(f.get("filesize")),
+                        "direct_link": f.get("url")
+                    }
 
-    # -------------------------
-    # All fallbacks failed
-    # -------------------------
-    return {
-        "error": True,
-        "message": last_error or "Extraction failed"
-            }
+        return {
+            "error": False,
+            "title": info.get("title"),
+            "duration": info.get("duration"),
+            "thumbnail": info.get("thumbnail"),
+            "video_with_audio": [video_360] if video_360 else [],
+            "audio_mp3": [audio_mp3] if audio_mp3 else []
+        }
+
+    except Exception as e:
+        return {
+            "error": True,
+            "message": str(e)
+        }
