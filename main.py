@@ -1,11 +1,12 @@
 from fastapi import FastAPI, Query
 import yt_dlp
 
-app = FastAPI(title="YouTube All-in-One API")
+app = FastAPI(title="YouTube Clean Downloader API")
 
 YDL_OPTS = {
     "quiet": True,
-    "skip_download": True
+    "skip_download": True,
+    "format": "best"
 }
 
 def mb(size):
@@ -18,36 +19,41 @@ def fetch(url: str = Query(...)):
     with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
         info = ydl.extract_info(url, download=False)
 
-    mp4_videos = []
-    mp3_audios = []
+    mp4_list = []
+    mp3_list = []
 
     for f in info.get("formats", []):
-        # 🎥 MP4 Video + Audio (progressive)
+        # ✅ ONLY progressive MP4 (video + audio)
         if (
             f.get("ext") == "mp4"
             and f.get("vcodec") != "none"
             and f.get("acodec") != "none"
+            and not f.get("protocol", "").startswith("m3u8")
         ):
-            mp4_videos.append({
-                "quality": f.get("format_note"),
+            mp4_list.append({
+                "quality": f.get("format_note") or f.get("height"),
                 "resolution": f.get("resolution"),
                 "filesize_mb": mb(f.get("filesize")),
-                "cdn": f.get("url")
+                "direct_link": f.get("url")
             })
 
-        # 🔊 MP3 / m4a audio
-        if f.get("vcodec") == "none" and f.get("acodec") != "none":
-            mp3_audios.append({
-                "bitrate_kbps": f.get("abr"),
+        # ✅ AUDIO only (MP3 / M4A)
+        if (
+            f.get("vcodec") == "none"
+            and f.get("acodec") != "none"
+            and not f.get("protocol", "").startswith("m3u8")
+        ):
+            mp3_list.append({
+                "bitrate_kbps": round(f.get("abr", 0), 1),
                 "ext": f.get("ext"),
                 "filesize_mb": mb(f.get("filesize")),
-                "cdn": f.get("url")
+                "direct_link": f.get("url")
             })
 
     return {
         "title": info.get("title"),
         "duration": info.get("duration"),
         "thumbnail": info.get("thumbnail"),
-        "mp4_video_audio": mp4_videos,
-        "mp3_audio": mp3_audios
+        "mp4_video_audio": mp4_list,
+        "audio_only": mp3_list
     }
