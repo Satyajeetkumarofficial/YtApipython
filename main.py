@@ -1,10 +1,7 @@
 from fastapi import FastAPI, Query
 import yt_dlp
 
-app = FastAPI(
-    title="YouTube Direct Downloader API",
-    version="1.0"
-)
+app = FastAPI(title="YouTube Downloader API", version="1.0")
 
 YDL_OPTS = {
     "quiet": True,
@@ -12,75 +9,85 @@ YDL_OPTS = {
     "nocheckcertificate": True
 }
 
-# 🔹 filesize calculator (exact + fallback)
 def calc_filesize(f, duration):
-    # exact filesize available
     if f.get("filesize"):
-        return round(f["filesize"] / 1024 / 1024, 2)
-
-    # fallback using bitrate
+        return f["filesize"]
     tbr = f.get("tbr")  # kbps
     if tbr and duration:
-        size_bytes = (tbr * 1024 * duration) / 8
-        return round(size_bytes / 1024 / 1024, 2)
-
+        return int((tbr * 1024 * duration) / 8)
     return None
 
 
-@app.get("/")
-def home():
-    return {
-        "status": "API Running",
-        "endpoint": "/fetch?url=YOUTUBE_URL"
-    }
-
-
 @app.get("/fetch")
-def fetch(url: str = Query(..., description="YouTube video URL")):
+def fetch(url: str = Query(..., description="YouTube URL")):
     with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
         info = ydl.extract_info(url, download=False)
 
-    mp4_video_audio = []
-    audio_only = []
+    video_with_audio = []
+    video_only = []
+    audio = []
 
     duration = info.get("duration")
 
     for f in info.get("formats", []):
+        # HLS skip
+        if f.get("protocol", "").startswith("m3u8"):
+            continue
 
-        protocol = f.get("protocol", "")
-        is_hls = protocol.startswith("m3u8")
+        width = f.get("width")
+        height = f.get("height")
 
-        # 🎥 MP4 Video + Audio (progressive only)
-        if (
-            f.get("ext") == "mp4"
-            and f.get("vcodec") != "none"
-            and f.get("acodec") != "none"
-            and not is_hls
-        ):
-            mp4_video_audio.append({
-                "quality": f.get("format_note") or f.get("height"),
-                "resolution": f.get("resolution"),
-                "filesize_mb": calc_filesize(f, duration),
-                "direct_link": f.get("url")
+        # 🎥 VIDEO + AUDIO (progressive)
+        if f.get("vcodec") != "none" and f.get("acodec") != "none":
+            label = f"{f.get('ext')} ({height}p)" if height else f.get("ext")
+            video_with_audio.append({
+                "label": label,
+                "type": "video_with_audio",
+                "width": width,
+                "height": height,
+                "extension": f.get("ext"),
+                "fps": f.get("fps"),
+                "url": f.get("url")
             })
 
-        # 🔊 AUDIO only (m4a / webm)
-        if (
-            f.get("vcodec") == "none"
-            and f.get("acodec") != "none"
-            and not is_hls
-        ):
-            audio_only.append({
-                "bitrate_kbps": round(f.get("abr", 0), 1),
-                "ext": f.get("ext"),
-                "filesize_mb": calc_filesize(f, duration),
-                "direct_link": f.get("url")
+        # 🎞️ VIDEO ONLY
+        elif f.get("vcodec") != "none" and f.get("acodec") == "none":
+            label = f"{f.get('ext')} ({height}p)" if height else f.get("ext")
+            video_only.append({
+                "label": label,
+                "type": "video_only",
+                "width": width,
+                "height": height,
+                "extension": f.get("ext"),
+                "fps": f.get("fps"),
+                "url": f.get("url")
             })
+
+        # 🔊 AUDIO ONLY
+        elif f.get("vcodec") == "none" and f.get("acodec") != "none":
+            bitrate = int(f.get("abr", 0) * 1000) if f.get("abr") else None
+            label = f"{f.get('ext')} ({int(f.get('abr', 0))}kb/s)"
+            audio.append({
+                "label": label,
+                "type": "audio",
+                "extension": f.get("ext"),
+                "bitrate": bitrate,
+                "url": f.get("url")
+            })
+
+    # sorting (better UX)
+    video_with_audio.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+    video_only.sort(key=lambda x: (x.get("height") or 0), reverse=True)
+    audio.sort(key=lambda x: (x.get("bitrate") or 0), reverse=True)
 
     return {
+        "error": False,
         "title": info.get("title"),
-        "duration": duration,
+        "duration": str(info.get("duration")),
         "thumbnail": info.get("thumbnail"),
-        "mp4_video_audio": mp4_video_audio,
-        "audio_only": audio_only
+        "video_with_audio": video_with_audio,
+        "video_only": video_only,
+        "audio": audio,
+        "join": "@ProXBotz on Telegram",
+        "support": "@ProBotUpdate"
     }
